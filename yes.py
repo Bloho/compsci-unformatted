@@ -1,15 +1,13 @@
 
 # ================================================================
-# Railway Management System
+# Railway Management System - Enterprise Edition
 # Created by Ayush Samanta and Sanshubh Kanaujia of XII A
 # Delhi Public School, Panipat Refinery
 #
-# Only dependency: mysql.connector
+# Dependency: mysql.connector ONLY
 # ================================================================
 
 import mysql.connector as myc
-
-# ---------------------- DATABASE CONFIG ------------------------
 
 DB_CONFIG = {
     "host": "localhost",
@@ -18,17 +16,16 @@ DB_CONFIG = {
     "database": "railway_ticketing_software"
 }
 
-# ---------------------- DB UTILITIES ---------------------------
+# ======================= DATABASE ===============================
 
-def get_connection():
+def get_conn():
     return myc.connect(**DB_CONFIG)
 
-def init_database():
-    conn = get_connection()
-    cur = conn.cursor()
+def init_db():
+    conn = get_conn()
+    c = conn.cursor()
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS user_info(
+    c.execute("""CREATE TABLE IF NOT EXISTS user_info(
         user_id INT PRIMARY KEY,
         user_name VARCHAR(50),
         user_age INT,
@@ -36,22 +33,20 @@ def init_database():
         user_mobile_no VARCHAR(15),
         password VARCHAR(10),
         role VARCHAR(10)
-    )
-    """)
+    )""")
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS trains_info(
+    c.execute("""CREATE TABLE IF NOT EXISTS trains_info(
         train_id INT PRIMARY KEY,
         train_name VARCHAR(100),
         source VARCHAR(50),
         destination VARCHAR(50),
         interstations TEXT,
-        fare TEXT
-    )
-    """)
+        fare TEXT,
+        seats INT,
+        status VARCHAR(20)
+    )""")
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS booking_info(
+    c.execute("""CREATE TABLE IF NOT EXISTS booking_info(
         booking_id INT PRIMARY KEY,
         train_id INT,
         user_id INT,
@@ -60,240 +55,350 @@ def init_database():
         source VARCHAR(50),
         destination VARCHAR(50),
         status VARCHAR(20)
-    )
-    """)
+    )""")
+
+    c.execute("""CREATE TABLE IF NOT EXISTS audit_logs(
+        log_id INT AUTO_INCREMENT PRIMARY KEY,
+        action VARCHAR(255),
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""")
 
     conn.commit()
     conn.close()
 
-# ---------------------- VALIDATION ------------------------------
+# ======================= UTILITIES ==============================
 
-def input_int(prompt, length=None):
+def log_action(text):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("INSERT INTO audit_logs(action) VALUES(%s)", (text,))
+    conn.commit()
+    conn.close()
+
+def num_input(msg, length=None):
     while True:
-        v = input(prompt).strip()
+        v = input(msg).strip()
         if not v.isdigit():
-            print("Only numeric input allowed.")
+            print("Numeric input only.")
             continue
         if length and len(v) != length:
-            print(f"Input must be exactly {length} digits.")
+            print(f"Must be {length} digits.")
             continue
         return int(v)
 
-def input_alpha(prompt):
+def text_input(msg):
     while True:
-        v = input(prompt).strip()
-        if not v.replace("_", "").isalpha():
-            print("Only alphabets or underscore allowed.")
+        v = input(msg).strip()
+        if not v.replace("_","").isalpha():
+            print("Alphabet/underscore only.")
             continue
         return v
 
-def input_gender(prompt):
+def gender_input():
     while True:
-        v = input(prompt).strip().lower()
-        if v not in ["m", "f"]:
-            print("Enter m or f only.")
-            continue
-        return v
+        g = input("Gender (m/f): ").lower()
+        if g in ["m","f"]:
+            return g
+        print("Invalid gender.")
 
-# ---------------------- USER MANAGEMENT -------------------------
+# ======================= USER SYSTEM ============================
 
 def register_user():
-    conn = get_connection()
-    cur = conn.cursor()
+    conn = get_conn()
+    c = conn.cursor()
 
-    user_id = input_int("User ID (6 digits): ", 6)
-    user_name = input_alpha("User Name (use _ instead of space): ")
-    user_age = input_int("Age: ")
-    user_gender = input_gender("Gender (m/f): ")
-    user_mobile = input_int("Mobile No (10 digits): ", 10)
-    password = input_int("Password (4 digits): ", 4)
+    uid = num_input("User ID (6 digits): ",6)
+    uname = text_input("Username: ")
+    age = num_input("Age: ")
+    gen = gender_input()
+    mob = num_input("Mobile (10 digits): ",10)
+    pwd = num_input("Password (4 digits): ",4)
 
-    cur.execute("SELECT * FROM user_info WHERE user_id=%s", (user_id,))
-    if cur.fetchone():
-        print("User already exists.")
+    c.execute("SELECT * FROM user_info WHERE user_id=%s",(uid,))
+    if c.fetchone():
+        print("User exists.")
         conn.close()
         return
 
-    cur.execute("""
-        INSERT INTO user_info VALUES(%s,%s,%s,%s,%s,%s,%s)
-    """, (user_id, user_name, user_age, user_gender, str(user_mobile), str(password), "user"))
-
+    c.execute("INSERT INTO user_info VALUES(%s,%s,%s,%s,%s,%s,%s)",
+              (uid,uname,age,gen,str(mob),str(pwd),"user"))
     conn.commit()
     conn.close()
-    print("User registered successfully.")
+    log_action(f"User registered {uid}")
+    print("Registration successful.")
 
-def login_user():
-    user_id = input_int("User ID: ")
-    password = input("Password: ").strip()
-
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM user_info WHERE user_id=%s AND password=%s", (user_id, password))
-    user = cur.fetchone()
+def login():
+    uid = num_input("User ID: ")
+    pwd = input("Password: ")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM user_info WHERE user_id=%s AND password=%s",(uid,pwd))
+    u = c.fetchone()
     conn.close()
-
-    if not user:
-        print("Invalid credentials.")
+    if not u:
+        print("Login failed.")
         return None
+    log_action(f"Login {uid}")
+    return u
 
-    return user
-
-# ---------------------- TRAIN MANAGEMENT ------------------------
+# ======================= TRAIN SYSTEM ===========================
 
 def add_train():
-    conn = get_connection()
-    cur = conn.cursor()
+    conn = get_conn()
+    c = conn.cursor()
 
-    train_id = input_int("Train ID (5 digits): ", 5)
-    train_name = input_alpha("Train Name: ")
-    source = input_alpha("Source: ")
-    destination = input_alpha("Destination: ")
-    interstations = input("Interstations (comma separated): ")
+    tid = num_input("Train ID (5 digits): ",5)
+    name = text_input("Train name: ")
+    src = text_input("Source: ")
+    dest = text_input("Destination: ")
+    inter = input("Interstations (comma separated): ")
     fare = input("Fare segments (comma separated): ")
+    seats = num_input("Total seats: ")
 
-    cur.execute("SELECT * FROM trains_info WHERE train_id=%s", (train_id,))
-    if cur.fetchone():
-        print("Train already exists.")
+    c.execute("SELECT * FROM trains_info WHERE train_id=%s",(tid,))
+    if c.fetchone():
+        print("Train exists.")
         conn.close()
         return
 
-    cur.execute("""
-        INSERT INTO trains_info VALUES(%s,%s,%s,%s,%s,%s)
-    """, (train_id, train_name, source, destination, interstations, fare))
-
+    c.execute("""INSERT INTO trains_info VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",
+              (tid,name,src,dest,inter,fare,seats,"active"))
     conn.commit()
     conn.close()
-    print("Train added successfully.")
+    log_action(f"Train added {tid}")
+    print("Train added.")
 
 def list_trains():
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM trains_info")
-    rows = cur.fetchall()
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM trains_info")
+    rows = c.fetchall()
     conn.close()
-
-    print("\n--- TRAINS LIST ---")
+    print("\n--- TRAINS ---")
     for r in rows:
         print(r)
 
-# ---------------------- BOOKING -------------------------------
+def disable_train():
+    tid = num_input("Train ID: ")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE trains_info SET status='inactive' WHERE train_id=%s",(tid,))
+    conn.commit()
+    conn.close()
+    log_action(f"Train disabled {tid}")
+    print("Train disabled.")
 
-def next_booking_id(cur):
-    cur.execute("SELECT MAX(booking_id) FROM booking_info")
-    r = cur.fetchone()[0]
-    return 1 if r is None else r + 1
+def update_train_name():
+    tid = num_input("Train ID: ")
+    new = text_input("New name: ")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE trains_info SET train_name=%s WHERE train_id=%s",(new,tid))
+    conn.commit()
+    conn.close()
+    log_action(f"Train name updated {tid}")
+    print("Updated.")
+
+def update_seats():
+    tid = num_input("Train ID: ")
+    seats = num_input("New seat count: ")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE trains_info SET seats=%s WHERE train_id=%s",(seats,tid))
+    conn.commit()
+    conn.close()
+    log_action(f"Seats updated {tid}")
+    print("Seats updated.")
+
+# ======================= BOOKINGS ===============================
+
+def next_booking_id(c):
+    c.execute("SELECT MAX(booking_id) FROM booking_info")
+    r = c.fetchone()[0]
+    return 1 if r is None else r+1
 
 def book_ticket(user):
-    conn = get_connection()
-    cur = conn.cursor()
-
     list_trains()
-    train_id = input_int("Enter Train ID: ")
+    tid = num_input("Train ID: ")
 
-    cur.execute("SELECT * FROM trains_info WHERE train_id=%s", (train_id,))
-    train = cur.fetchone()
-    if not train:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM trains_info WHERE train_id=%s AND status='active'",(tid,))
+    tr = c.fetchone()
+
+    if not tr:
         print("Invalid train.")
         conn.close()
         return
 
-    date = input("Date of journey (YYYY-MM-DD): ")
-    fare_total = sum(int(x) for x in train[5].split(",") if x.strip().isdigit())
+    date = input("Date (YYYY-MM-DD): ")
+    fare = sum(int(x) for x in tr[5].split(",") if x.isdigit())
 
-    booking_id = next_booking_id(cur)
-
-    cur.execute("""
-        INSERT INTO booking_info VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (booking_id, train_id, user[0], date, fare_total, train[2], train[3], "active"))
-
+    bid = next_booking_id(c)
+    c.execute("""INSERT INTO booking_info VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",
+              (bid,tid,user[0],date,fare,tr[2],tr[3],"active"))
     conn.commit()
     conn.close()
+    log_action(f"Ticket booked {bid}")
+    print("Booked. Booking ID:",bid)
 
-    print("Ticket booked successfully.")
-    print("Booking ID:", booking_id)
-
-def view_bookings(user):
-    conn = get_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM booking_info WHERE user_id=%s", (user[0],))
-    rows = cur.fetchall()
+def cancel_ticket():
+    bid = num_input("Booking ID: ")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE booking_info SET status='cancelled' WHERE booking_id=%s",(bid,))
+    conn.commit()
     conn.close()
+    log_action(f"Ticket cancelled {bid}")
+    print("Cancelled.")
 
-    print("\n--- YOUR BOOKINGS ---")
+def view_user_bookings(user):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM booking_info WHERE user_id=%s",(user[0],))
+    rows = c.fetchall()
+    conn.close()
     for r in rows:
         print(r)
 
-# ---------------------- ADMIN PANEL ----------------------------
+def view_all_bookings():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM booking_info")
+    rows = c.fetchall()
+    conn.close()
+    for r in rows:
+        print(r)
 
-def admin_panel():
+# ======================= USER ADMIN TOOLS =======================
+
+def promote_user():
+    uid = num_input("User ID: ")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("UPDATE user_info SET role='admin' WHERE user_id=%s",(uid,))
+    conn.commit()
+    conn.close()
+    log_action(f"User promoted {uid}")
+    print("Promoted to admin.")
+
+def delete_user():
+    uid = num_input("User ID: ")
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("DELETE FROM user_info WHERE user_id=%s",(uid,))
+    conn.commit()
+    conn.close()
+    log_action(f"User deleted {uid}")
+    print("Deleted user.")
+
+def list_users():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM user_info")
+    rows = c.fetchall()
+    conn.close()
+    for r in rows:
+        print(r)
+
+# ======================= REPORTING ==============================
+
+def system_stats():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM user_info")
+    users = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM trains_info")
+    trains = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM booking_info")
+    bookings = c.fetchone()[0]
+    conn.close()
+
+    print("Users:",users)
+    print("Trains:",trains)
+    print("Bookings:",bookings)
+
+def view_logs():
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT * FROM audit_logs ORDER BY log_id DESC LIMIT 50")
+    rows = c.fetchall()
+    conn.close()
+    for r in rows:
+        print(r)
+
+# ======================= MENUS =================================
+
+def admin_menu():
     while True:
-        print("\nADMIN PANEL")
-        print("1. Add Train")
-        print("2. List Trains")
-        print("3. Exit")
+        print("\n--- ADMIN PANEL ---")
+        print("1 Add Train")
+        print("2 List Trains")
+        print("3 Disable Train")
+        print("4 Update Train Name")
+        print("5 Update Seats")
+        print("6 View All Bookings")
+        print("7 Cancel Booking")
+        print("8 Promote User")
+        print("9 Delete User")
+        print("10 List Users")
+        print("11 System Stats")
+        print("12 View Logs")
+        print("13 Logout")
 
-        ch = input("Choice: ").strip()
-        if ch == "1":
-            add_train()
-        elif ch == "2":
-            list_trains()
-        elif ch == "3":
-            break
-        else:
-            print("Invalid choice.")
+        ch = input("Choice: ")
+        if ch=="1": add_train()
+        elif ch=="2": list_trains()
+        elif ch=="3": disable_train()
+        elif ch=="4": update_train_name()
+        elif ch=="5": update_seats()
+        elif ch=="6": view_all_bookings()
+        elif ch=="7": cancel_ticket()
+        elif ch=="8": promote_user()
+        elif ch=="9": delete_user()
+        elif ch=="10": list_users()
+        elif ch=="11": system_stats()
+        elif ch=="12": view_logs()
+        elif ch=="13": break
+        else: print("Invalid.")
 
-# ---------------------- USER PANEL -----------------------------
-
-def user_panel(user):
+def user_menu(user):
     while True:
-        print("\nUSER PANEL")
-        print("1. Book Ticket")
-        print("2. View My Bookings")
-        print("3. Exit")
+        print("\n--- USER PANEL ---")
+        print("1 Book Ticket")
+        print("2 View My Bookings")
+        print("3 Logout")
 
-        ch = input("Choice: ").strip()
-        if ch == "1":
-            book_ticket(user)
-        elif ch == "2":
-            view_bookings(user)
-        elif ch == "3":
-            break
-        else:
-            print("Invalid choice.")
+        ch = input("Choice: ")
+        if ch=="1": book_ticket(user)
+        elif ch=="2": view_user_bookings(user)
+        elif ch=="3": break
+        else: print("Invalid.")
 
-# ---------------------- MAIN MENU ------------------------------
+# ======================= MAIN ==================================
 
-def main_menu():
-    init_database()
-
+def main():
+    init_db()
     while True:
-        print("\n==============================================")
-        print(" Railway Management System")
-        print(" Delhi Public School, Panipat Refinery")
-        print(" Created by Ayush Samanta & Sanshubh Kanaujia (XII A)")
-        print("==============================================")
-        print("1. Register")
-        print("2. Login")
-        print("3. Exit")
+        print("\nRailway Management System - DPS Panipat Refinery")
+        print("Created by Ayush Samanta & Sanshubh Kanaujia (XII A)")
+        print("1 Register")
+        print("2 Login")
+        print("3 Exit")
 
-        ch = input("Choice: ").strip()
-
-        if ch == "1":
-            register_user()
-        elif ch == "2":
-            user = login_user()
-            if user:
-                if user[6] == "admin":
-                    admin_panel()
+        ch = input("Choice: ")
+        if ch=="1": register_user()
+        elif ch=="2":
+            u = login()
+            if u:
+                if u[6]=="admin":
+                    admin_menu()
                 else:
-                    user_panel(user)
-        elif ch == "3":
-            print("Exiting system.")
+                    user_menu(u)
+        elif ch=="3":
             break
         else:
-            print("Invalid choice.")
+            print("Invalid.")
 
-# ---------------------- ENTRY POINT ----------------------------
-
-if __name__ == "__main__":
-    main_menu()
+if __name__=="__main__":
+    main()
